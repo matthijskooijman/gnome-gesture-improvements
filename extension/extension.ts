@@ -10,6 +10,8 @@ import * as DBusUtils from './src/utils/dbus';
 import { imports } from 'gnome-shell';
 
 const ExtensionUtils = imports.misc.extensionUtils;
+const ExtMe = imports.misc.extensionUtils.getCurrentExtension();
+const { PatchExtension } = ExtMe.imports.src.patch;
 
 class Extension {
 	private _extensions: ISubExtension[];
@@ -71,6 +73,7 @@ class Extension {
 			new OverviewRoundTripGestureExtension(),
 			new GestureExtension(),
 			new SnapWindowExtension(),
+			new PatchExtension(),
 		];
 		this._extensions.forEach(extension => extension.apply());
 	}
