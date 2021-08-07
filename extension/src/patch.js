@@ -10,10 +10,9 @@ const { WorkspacesView } = imports.ui.workspacesView;
 const OverviewControls = imports.ui.overviewControls;
 
 const Me = imports.misc.extensionUtils.getCurrentExtension();
-const PatchedWorkspace = Me.imports.src.patches.workspace;
+const Workspace = Me.imports.src.patches.workspace;
 
 function Patched_WorkspaceView_UpdateWorkspaces() {
-	// log(`called PatchedWorkspaceView_UpdateWorkspacesState ${this}`);
 	let workspaceManager = global.workspace_manager;
 	let newNumWorkspaces = workspaceManager.n_workspaces;
 
@@ -22,10 +21,11 @@ function Patched_WorkspaceView_UpdateWorkspaces() {
 		let workspace;
 
 		if (j >= this._workspaces.length) { /* added */
-			workspace = new PatchedWorkspace.PatchedWorkspace(
+			workspace = new Workspace.Workspace(
 				metaWorkspace,
 				this._monitorIndex,
-				this._overviewAdjustment);
+				this._overviewAdjustment
+			);
 			this.add_actor(workspace);
 			this._workspaces[j] = workspace;
 		} else {
@@ -76,8 +76,7 @@ function Overview_gestureBegin(tracker) {
 	this._overview.controls.gestureBegin(tracker);
 
 	if (!wasShown) {
-		Main.layoutManager.overviewGroup.set_child_above_sibling(
-			this._coverPane, null);
+		Main.layoutManager.overviewGroup.set_child_above_sibling(this._coverPane, null);
 		this._coverPane.show();
 		this.emit('showing');
 	}

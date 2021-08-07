@@ -1,4 +1,5 @@
-/* exported PatchedWorkspace */
+// -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*-
+/* exported Workspace */
 
 const { Clutter, GLib, GObject, Graphene, Meta, St } = imports.gi;
 
@@ -206,9 +207,7 @@ var UnalignedLayoutStrategy = class extends LayoutStrategy {
 	}
 
 	computeLayout(windows, layoutParams) {
-		layoutParams = Params.parse(layoutParams, {
-			numRows: 0,
-		});
+		layoutParams = Params.parse(layoutParams, {numRows: 0,});
 
 		if (layoutParams.numRows === 0)
 			throw new Error(`${this.constructor.name}: No numRows given in layout params`);
@@ -283,8 +282,7 @@ var UnalignedLayoutStrategy = class extends LayoutStrategy {
 		let verticalScale = spacedHeight / layout.gridHeight;
 
 		// Thumbnails should be less than 70% of the original size
-		let scale = Math.min(
-			horizontalScale, verticalScale, WINDOW_PREVIEW_MAXIMUM_SCALE);
+		let scale = Math.min(horizontalScale, verticalScale, WINDOW_PREVIEW_MAXIMUM_SCALE);
 
 		let scaledLayoutWidth = layout.gridWidth * scale + hspacing;
 		let scaledLayoutHeight = layout.gridHeight * scale + vspacing;
@@ -394,18 +392,26 @@ function animateAllocation(actor, box) {
 	return actor.get_transition('allocation');
 }
 
-var PatchedWorkspaceLayout = GObject.registerClass({
+var WorkspaceLayout = GObject.registerClass({
 	Properties: {
 		'spacing': GObject.ParamSpec.double(
-			'spacing', 'Spacing', 'Spacing',
+			'spacing', 
+			'Spacing', 
+			'Spacing',
 			GObject.ParamFlags.READWRITE,
-			0, Infinity, 20),
+			0, 
+			Infinity, 
+			20
+		),
 		'layout-frozen': GObject.ParamSpec.boolean(
-			'layout-frozen', 'Layout frozen', 'Layout frozen',
+			'layout-frozen', 
+			'Layout frozen', 
+			'Layout frozen',
 			GObject.ParamFlags.READWRITE,
-			false),
+			false
+		),
 	},
-}, class PatchedWorkspaceLayout extends Clutter.LayoutManager {
+}, class WorkspaceLayout extends Clutter.LayoutManager {
 	_init(metaWorkspace, monitorIndex, overviewAdjustment) {
 		super._init();
 
@@ -520,9 +526,7 @@ var PatchedWorkspaceLayout = GObject.registerClass({
 			if (numColumns === lastNumColumns)
 				break;
 
-			const layout = this._layoutStrategy.computeLayout(this._sortedWindows, {
-				numRows,
-			});
+			const layout = this._layoutStrategy.computeLayout(this._sortedWindows, {numRows,});
 
 			const [scale, space] = this._layoutStrategy.computeScaleAndSpace(layout, area);
 
@@ -629,27 +633,38 @@ var PatchedWorkspaceLayout = GObject.registerClass({
 
 		const { ControlsState } = OverviewControls;
 		const overviewTransitionParams = this._overviewAdjustment.getStateTransitionParams();
-		const transitionMaxState = Math.max(overviewTransitionParams.initialState, overviewTransitionParams.finalState);
-		const transitionMinState = Math.min(overviewTransitionParams.initialState, overviewTransitionParams.finalState);
+		const { currentState, transitioning, initialState: transitionInitialState, finalState: transitionFinalState } =
+			this._overviewAdjustment.getStateTransitionParams();
+		const transitionMaxState = Math.max(transitionInitialState, transitionFinalState);
+		const transitionMinState = Math.min(transitionInitialState, transitionFinalState);
 		const inSessionWindowPickerTransition = transitionMaxState <= ControlsState.WINDOW_PICKER;
-		const inWindowPickerAppGridTransition = transitionMinState >= ControlsState.WINDOW_PICKER;
+		const inWindowPickerAppGridTransition = transitionMinState === ControlsState.WINDOW_PICKER;
 		const inSessionAppGridTransition = !inSessionWindowPickerTransition && !inWindowPickerAppGridTransition;
 
 		const window = this._sortedWindows[0];
 
 		if (inSessionWindowPickerTransition || !window) {
 			container.remove_clip();
+			container.set_clip_to_allocation(false);
 		} else if (inWindowPickerAppGridTransition) {
 			const [, bottomOversize] = window.chromeHeights();
 			const [containerX, containerY] = containerBox.get_origin();
 
-			const extraHeightProgress = this._overviewAdjustment.value -
-				OverviewControls.ControlsState.WINDOW_PICKER;
+			const extraHeightProgress =
+				currentState - OverviewControls.ControlsState.WINDOW_PICKER;
 
 			const extraClipHeight = bottomOversize * (1 - extraHeightProgress);
 
-			container.set_clip(containerX, containerY,
-				containerWidth, containerHeight + extraClipHeight);
+			container.set_clip_to_allocation(false);
+			container.set_clip(
+				containerX, 
+				containerY,
+				containerWidth, 
+				containerHeight + extraClipHeight
+			);
+		} else {
+			container.remove_clip();
+			container.set_clip_to_allocation(true);
 		}
 
 		let layoutChanged = false;
@@ -671,9 +686,6 @@ var PatchedWorkspaceLayout = GObject.registerClass({
 		const allocationScale = containerWidth / workareaWidth;
 
 		const childBox = new Clutter.ActorBox();
-
-		let [clipX, clipY] = containerBox.get_origin();
-		let [clipWidth, clipHeight] = [containerWidth, containerHeight];
 
 		const nSlots = this._windowSlots.length;
 		for (let i = 0; i < nSlots; i++) {
@@ -697,7 +709,8 @@ var PatchedWorkspaceLayout = GObject.registerClass({
 				workspaceBoxWidth = 0;
 				workspaceBoxHeight = 0;
 
-				child.opacity = stateAdjustementValue * 255;
+				if (transitioning)
+					child.opacity = stateAdjustementValue * 255;
 			}
 
 			// Don't allow the scaled floating size to drop below
@@ -717,14 +730,6 @@ var PatchedWorkspaceLayout = GObject.registerClass({
 
 			childBox.set_origin(x, y);
 			childBox.set_size(width, height);
-
-			if (inSessionAppGridTransition) {
-				clipX = Math.min(clipX, x);
-				clipY = Math.min(clipY, y);
-
-				clipWidth = Math.max(clipWidth, x + width - clipX);
-				clipHeight = Math.max(clipHeight, y + height - clipY);
-			}
 
 			if (windowInfo.currentTransition) {
 				windowInfo.currentTransition.get_interval().set_final(childBox);
@@ -756,16 +761,6 @@ var PatchedWorkspaceLayout = GObject.registerClass({
 			} else {
 				child.allocate(childBox);
 			}
-		}
-
-		if (inSessionAppGridTransition) {
-			const extraClipProgress = this._overviewAdjustment.value / ControlsState.APP_GRID;
-			const [containerX, containerY] = containerBox.get_origin();
-			clipX = Util.lerp(clipX, containerX, extraClipProgress);
-			clipY = Util.lerp(clipY, containerY, extraClipProgress);
-			clipWidth = Util.lerp(clipWidth, containerWidth, extraClipProgress);
-			clipHeight = Util.lerp(clipHeight, containerHeight, extraClipProgress);
-			container.set_clip(clipX, clipY, clipWidth, clipHeight);
 		}
 	}
 
@@ -939,8 +934,8 @@ var PatchedWorkspaceLayout = GObject.registerClass({
 	}
 });
 
-var PatchedWorkspaceBackground = GObject.registerClass(
-	class PatchedWorkspaceBackground extends St.Widget {
+var WorkspaceBackground = GObject.registerClass(
+	class WorkspaceBackground extends St.Widget {
 		_init(monitorIndex, stateAdjustment) {
 			super._init({
 				style_class: 'workspace-background',
@@ -1019,7 +1014,8 @@ var PatchedWorkspaceBackground = GObject.registerClass(
 			const scaledBox = box.copy();
 			scaledBox.set_origin(
 				box.x1 + (width - scaledWidth) / 2,
-				box.y1 + (height - scaledHeight) / 2);
+				box.y1 + (height - scaledHeight) / 2
+			);
 			scaledBox.set_size(scaledWidth, scaledHeight);
 
 			const progress = this._stateAdjustment.value;
@@ -1038,13 +1034,22 @@ var PatchedWorkspaceBackground = GObject.registerClass(
 
 			const [contentWidth, contentHeight] = contentBox.get_size();
 			const monitor = Main.layoutManager.monitors[this._monitorIndex];
-			const xOff = (contentWidth / this._workarea.width) *
-				(this._workarea.x - monitor.x);
-			const yOff = (contentHeight / this._workarea.height) *
-				(this._workarea.y - monitor.y);
+			const [mX1, mX2] = [monitor.x, monitor.x + monitor.width];
+			const [mY1, mY2] = [monitor.y, monitor.y + monitor.height];
+			const [wX1, wX2] = [this._workarea.x, this._workarea.x + this._workarea.width];
+			const [wY1, wY2] = [this._workarea.y, this._workarea.y + this._workarea.height];
+			const xScale = contentWidth / this._workarea.width;
+			const yScale = contentHeight / this._workarea.height;
+			const leftOffset = wX1 - mX1;
+			const topOffset = wY1 - mY1;
+			const rightOffset = mX2 - wX2;
+			const bottomOffset = mY2 - wY2;
 
-			contentBox.set_origin(-xOff, -yOff);
-			contentBox.set_size(xOff + contentWidth, yOff + contentHeight);
+			contentBox.set_origin(-leftOffset * xScale, -topOffset * yScale);
+			contentBox.set_size(
+				contentWidth + (leftOffset + rightOffset) * xScale,
+				contentHeight + (topOffset + bottomOffset) * yScale
+			);
 			this._backgroundGroup.allocate(contentBox);
 		}
 
@@ -1059,13 +1064,14 @@ var PatchedWorkspaceBackground = GObject.registerClass(
 				delete this._workareasChangedId;
 			}
 		}
-	});
+	}
+);
 
 /**
  * @metaWorkspace: a #Meta.Workspace, or null
  */
-var PatchedWorkspace = GObject.registerClass(
-	class PatchedWorkspace extends St.Widget {
+var Workspace = GObject.registerClass(
+	class Workspace extends St.Widget {
 		_init(metaWorkspace, monitorIndex, overviewAdjustment) {
 			super._init({
 				style_class: 'window-picker',
@@ -1073,12 +1079,15 @@ var PatchedWorkspace = GObject.registerClass(
 				layout_manager: new Clutter.BinLayout(),
 			});
 
-			const layoutManager = new PatchedWorkspaceLayout(metaWorkspace, monitorIndex,
-				overviewAdjustment);
+			const layoutManager = new WorkspaceLayout(
+				metaWorkspace, 
+				monitorIndex,
+				overviewAdjustment
+			);
 
 			// Background
 			this._background =
-				new PatchedWorkspaceBackground(monitorIndex, layoutManager.stateAdjustment);
+				new WorkspaceBackground(monitorIndex, layoutManager.stateAdjustment);
 			this.add_child(this._background);
 
 			// Window previews
@@ -1135,15 +1144,11 @@ var PatchedWorkspace = GObject.registerClass(
 
 			// Track window changes, but let the window tracker process them first
 			if (this.metaWorkspace) {
-				this._windowAddedId = this.metaWorkspace.connect_after(
-					'window-added', this._windowAdded.bind(this));
-				this._windowRemovedId = this.metaWorkspace.connect_after(
-					'window-removed', this._windowRemoved.bind(this));
+				this._windowAddedId = this.metaWorkspace.connect_after('window-added', this._windowAdded.bind(this));
+				this._windowRemovedId = this.metaWorkspace.connect_after('window-removed', this._windowRemoved.bind(this));
 			}
-			this._windowEnteredMonitorId = global.display.connect_after(
-				'window-entered-monitor', this._windowEnteredMonitor.bind(this));
-			this._windowLeftMonitorId = global.display.connect_after(
-				'window-left-monitor', this._windowLeftMonitor.bind(this));
+			this._windowEnteredMonitorId = global.display.connect_after('window-entered-monitor', this._windowEnteredMonitor.bind(this));
+			this._windowLeftMonitorId = global.display.connect_after('window-left-monitor', this._windowLeftMonitor.bind(this));
 			this._layoutFrozenId = 0;
 
 			// DND requires this to be set
@@ -1205,8 +1210,7 @@ var PatchedWorkspace = GObject.registerClass(
 				() => {
 					const [newX, newY] = global.get_pointer();
 					const pointerHasMoved = oldX !== newX || oldY !== newY;
-					const actorUnderPointer = global.stage.get_actor_at_pos(
-						Clutter.PickMode.REACTIVE, newX, newY);
+					const actorUnderPointer = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, newX, newY);
 
 					if ((pointerHasMoved && this.contains(actorUnderPointer)) ||
 						this._windows.some(w => w.contains(actorUnderPointer))) {
@@ -1218,10 +1222,13 @@ var PatchedWorkspace = GObject.registerClass(
 					this._container.layout_manager.layout_frozen = false;
 					this._layoutFrozenId = 0;
 					return GLib.SOURCE_REMOVE;
-				});
+				}
+			);
 
-			GLib.Source.set_name_by_id(this._layoutFrozenId,
-				'[gnome-shell] this._layoutFrozenId');
+			GLib.Source.set_name_by_id(
+				this._layoutFrozenId,
+				'[gnome-shell] this._layoutFrozenId'
+			);
 		}
 
 		_doAddWindow(metaWin) {
@@ -1375,8 +1382,10 @@ var PatchedWorkspace = GObject.registerClass(
 		_addWindowClone(metaWindow) {
 			let clone = new WindowPreview(metaWindow, this, this._overviewAdjustment);
 
-			clone.connect('selected',
-				this._onCloneSelected.bind(this));
+			clone.connect(
+				'selected',
+				this._onCloneSelected.bind(this)
+			);
 			clone.connect('drag-begin', () => {
 				Main.overview.beginWindowDrag(metaWindow);
 			});
@@ -1491,4 +1500,5 @@ var PatchedWorkspace = GObject.registerClass(
 		get stateAdjustment() {
 			return this._container.layout_manager.stateAdjustment;
 		}
-	});
+	}
+);
