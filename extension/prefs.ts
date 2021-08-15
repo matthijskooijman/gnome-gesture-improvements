@@ -1,9 +1,7 @@
 import Gtk from '@gi-types/gtk';
+// import Gdk from '@gi-types/gdk';
 import Gio from '@gi-types/gio';
-import { imports } from 'gnome-shell';
-
-const ExtensionUtils = imports.misc.extensionUtils;
-const Me = ExtensionUtils.getCurrentExtension();
+import { getSettings, IExtensionSettings } from './generated/settings';
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 export function init(): void { }
@@ -14,7 +12,7 @@ export function buildPrefsWidget(): Gtk.Widget {
 	const UIFilePath = Me.dir.get_child('ui').get_path() + '/prefs.ui';
 	builder.add_from_file(UIFilePath);
 
-	const settings = ExtensionUtils.getSettings();
+	const settings: IExtensionSettings = getSettings();
 
 	const touchpad_speed: Gtk.Scale = builder.get_object('touchpad-speed-scale');
 	const touchpad_display_label: Gtk.Label = builder.get_object('touchpadspeed_speed_display_value');

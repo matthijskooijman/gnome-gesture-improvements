@@ -8,7 +8,10 @@ pack:
 	gnome-extensions pack --force \
 		--out-dir $(BUILDIR) $(EXTENSIONDIR) \
 		--extra-source=constants.js \
-		--extra-source=src --extra-source=ui --extra-source=schemas
+		--extra-source=src \
+		--extra-source=ui \
+		--extra-source=schemas \
+		--extra-source=generated 
 
 update:
 	gnome-extensions install -f build/*.shell-extension.zip

@@ -117,6 +117,15 @@
             "rules": {
                 "no-console": "off"
             }
+        },
+        {
+            "files": [
+                "extension/generated/**/*.ts"
+            ],
+            "rules": {
+                "@typescript-eslint/no-unused-vars": "off",
+                "no-mixed-spaces-and-tabs": "warn"
+            }
         }
     ]
 }

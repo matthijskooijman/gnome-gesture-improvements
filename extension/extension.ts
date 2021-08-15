@@ -8,17 +8,17 @@ import { OverviewRoundTripGestureExtension } from './src/overviewRoundTrip';
 import { SnapWindowExtension } from './src/snapWindow';
 import * as DBusUtils from './src/utils/dbus';
 import { imports } from 'gnome-shell';
+import { AllTypeSettings, getSettings, IExtensionSettings } from './generated/settings';
 
-const ExtensionUtils = imports.misc.extensionUtils;
 const ExtMe = imports.misc.extensionUtils.getCurrentExtension();
 const { PatchExtension } = ExtMe.imports.src.patch;
 
 class Extension {
 	private _extensions: ISubExtension[];
-	settings?: Gio.Settings;
+	settings?: IExtensionSettings;
 	private _settingChangedId = 0;
 	private _reloadWaitId = 0;
-	private _noReloadDelayFor: string[];
+	private _noReloadDelayFor: AllTypeSettings[];
 
 	constructor() {
 		this._extensions = [];
@@ -29,7 +29,7 @@ class Extension {
 	}
 
 	enable() {
-		this.settings = ExtensionUtils.getSettings();
+		this.settings = getSettings();
 		this._settingChangedId = this.settings.connect('changed', this.reload.bind(this));
 		this._enable();
 	}
@@ -48,7 +48,7 @@ class Extension {
 		DBusUtils.drop_proxy();
 	}
 
-	reload(_settings: never, key: string) {
+	reload(_settings: Gio.Settings, key: AllTypeSettings) {
 		if (this._reloadWaitId !== 0) {
 			GLib.source_remove(this._reloadWaitId);
 			this._reloadWaitId = 0;
