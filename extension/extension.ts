@@ -22,10 +22,7 @@ class Extension {
 
 	constructor() {
 		this._extensions = [];
-		this._noReloadDelayFor = [
-			'default-session-workspace',
-			'default-overview',
-		];
+		this._noReloadDelayFor = [];
 	}
 
 	enable() {
@@ -49,6 +46,7 @@ class Extension {
 	}
 
 	reload(_settings: Gio.Settings, key: AllTypeSettings) {
+		this._disable();
 		if (this._reloadWaitId !== 0) {
 			GLib.source_remove(this._reloadWaitId);
 			this._reloadWaitId = 0;
@@ -58,7 +56,6 @@ class Extension {
 			GLib.PRIORITY_DEFAULT,
 			(this._noReloadDelayFor.includes(key) ? 0 : Constants.RELOAD_DELAY),
 			() => {
-				this._disable();
 				this._enable();
 				this._reloadWaitId = 0;
 				return GLib.SOURCE_REMOVE;
@@ -75,7 +72,10 @@ class Extension {
 			new SnapWindowExtension(),
 			new PatchExtension(),
 		];
-		this._extensions.forEach(extension => extension.apply());
+		this._extensions.forEach(extension => {
+			if (extension.apply)
+				extension.apply();
+		});
 	}
 
 	_disable() {

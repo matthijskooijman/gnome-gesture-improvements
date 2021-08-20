@@ -38,7 +38,7 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 	},
 	Signals: {
 		'begin': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE] },
-		'update': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE] },
+		'update': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE, GObject.TYPE_UINT] },
 		'end': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE] },
 	},
 }, class TouchpadSwipeGesture extends GObject.Object {
@@ -51,6 +51,9 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 	private _cumulativeY = 0;
 	private _followNaturalScroll: boolean;
 	private _toggledDirection = false;
+	private _autoSwitchDirection = false;
+	private _autodirection: Clutter.Orientation;
+	private _autoSwitchPositive: boolean | undefined;
 	_stageCaptureEvent = 0;
 	SWIPE_MULTIPLIER: number;
 	TOUCHPAD_BASE_HEIGHT = TouchpadConstants.TOUCHPAD_BASE_HEIGHT;
@@ -70,6 +73,7 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 		this._nfingers = nfingers;
 		this._allowedModes = allowedModes;
 		this.orientation = orientation;
+		this._autodirection = orientation;
 		this._state = TouchpadState.NONE;
 		this._checkAllowedGesture = checkAllowedGesture;
 		this._followNaturalScroll = followNaturalScroll;
@@ -90,6 +94,8 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 		if (gesturePhase === Clutter.TouchpadGesturePhase.BEGIN) {
 			this._state = TouchpadState.NONE;
 			this._toggledDirection = false;
+			this._autoSwitchDirection = false;
+			this._autodirection = this.orientation;
 		}
 
 		if (this._state === TouchpadState.IGNORED)
@@ -154,6 +160,7 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 				if (gestureOrientation === this.orientation) {
 					this._state = TouchpadState.HANDLING;
 					this.emit('begin', time, x, y);
+					return Clutter.EVENT_STOP;
 				} else {
 					this._state = TouchpadState.IGNORED;
 					return Clutter.EVENT_PROPAGATE;
@@ -163,7 +170,22 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 			}
 		}
 
-		const vertical = this.orientation === Clutter.Orientation.VERTICAL;
+		if (this._autoSwitchDirection) {
+			this._cumulativeX += dx * this.SWIPE_MULTIPLIER;
+			this._cumulativeY += dy * this.SWIPE_MULTIPLIER;
+
+			const cdx = this._cumulativeX;
+			const cdy = this._cumulativeY;
+			const distance = Math.sqrt(cdx * cdx + cdy * cdy);
+
+			if (distance >= TouchpadConstants.SWITCH_DIRECTION_THRESHOLD_DISTANCE) {
+				this._setAutoDirection(cdx, cdy);
+				this._cumulativeX = 0;
+				this._cumulativeY = 0;
+			}
+		}
+
+		const vertical = this._autodirection === Clutter.Orientation.VERTICAL;
 		let delta = ((vertical !== this._toggledDirection) ? dy : dx) * this.SWIPE_MULTIPLIER;
 		const distance = vertical ? this.TOUCHPAD_BASE_HEIGHT : this.TOUCHPAD_BASE_WIDTH;
 
@@ -173,7 +195,7 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 				if (this._followNaturalScroll)
 					delta = -delta;
 
-				this.emit('update', time, delta, distance);
+				this.emit('update', time, delta, distance, this._autodirection);
 				break;
 
 			case Clutter.TouchpadGesturePhase.END:
@@ -181,12 +203,32 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 				this.emit('end', time, distance);
 				this._state = TouchpadState.NONE;
 				this._toggledDirection = false;
-				break;
+				this._autoSwitchDirection = false;
+				this._autodirection = this.orientation;
+				return Clutter.EVENT_STOP;
 		}
 
 		return this._state === TouchpadState.HANDLING
 			? Clutter.EVENT_STOP
 			: Clutter.EVENT_PROPAGATE;
+	}
+
+	private _setAutoDirection(cdx: number, cdy: number) {
+		// is gesture positive or negative
+		const absCdxoy = Math.max(Math.abs(cdx), Math.abs(cdy));
+		let canSwitchDirection = true;
+		if (this._autoSwitchPositive === true) {
+			canSwitchDirection = absCdxoy === Math.max(cdx, cdy);
+		}
+		else if (this._autoSwitchPositive === false) {
+			canSwitchDirection = absCdxoy === Math.max(-cdx, -cdy);
+		}
+
+		if (canSwitchDirection && this._autoSwitchDirection) {
+			this._autodirection = Math.abs(cdx) > Math.abs(cdy)
+				? Clutter.Orientation.HORIZONTAL
+				: Clutter.Orientation.VERTICAL;
+		}
 	}
 
 	switchDirectionTo(direction: Clutter.Orientation): void {
@@ -195,6 +237,13 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 		}
 
 		this._toggledDirection = direction !== this.orientation;
+	}
+
+	public setAutoSwitchDirection(autoSwitch: boolean, positive: boolean, gestureSpeed?: number) {
+		this._autodirection = this.orientation;
+		this._autoSwitchDirection = autoSwitch;
+		this._autoSwitchPositive = positive;
+		this.SWIPE_MULTIPLIER = gestureSpeed !== undefined ? TouchpadConstants.SWIPE_MULTIPLIER * gestureSpeed : this.SWIPE_MULTIPLIER;
 	}
 
 	destroy() {

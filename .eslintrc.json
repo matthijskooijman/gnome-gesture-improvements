@@ -91,6 +91,7 @@
             ],
             "globals": {
                 "log": "readonly",
+                "logError": "readonly",
                 "global": "readonly",
                 "imports": "readonly",
                 "console": "readonly",
