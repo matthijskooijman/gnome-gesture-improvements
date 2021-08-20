@@ -1,5 +1,6 @@
 import GObject from '@gi-types/gobject';
 import Shell from '@gi-types/shell';
+// import Meta from '@gi-types/meta';
 import Clutter from '@gi-types/clutter';
 import { CustomEventType, imports, global, __shell_private_types } from 'gnome-shell';
 
@@ -38,7 +39,7 @@ abstract class SwipeTrackerEndPointsModifer {
 
 	protected abstract _gestureBegin(tracker: SwipeTrackerT, monitor: never): void;
 	protected abstract _gestureUpdate(tracker: SwipeTrackerT, progress: number): void;
-	protected abstract _gestureEnd(tracker: SwipeTrackerT, duration: number, progress: number): void;
+	protected abstract _gestureEnd(tracker: SwipeTrackerT, duration: number, progress: number, time: number): void;
 
 	protected _modifySnapPoints(tracker: SwipeTrackerT, callback: (tracker: ShallowSwipeTrackerT) => void) {
 		const _tracker: ShallowSwipeTrackerT = {
@@ -104,9 +105,9 @@ class WorkspaceAnimationModifier extends SwipeTrackerEndPointsModifer {
 		this._workspaceAnimation._switchWorkspaceUpdate(tracker, progress);
 	}
 
-	protected _gestureEnd(tracker: SwipeTrackerT, duration: number, progress: number): void {
+	protected _gestureEnd(tracker: SwipeTrackerT, duration: number, progress: number, time: number): void {
 		progress = Math.clamp(progress, this._firstVal, this._lastVal);
-		this._workspaceAnimation._switchWorkspaceEnd(tracker, duration, progress);
+		this._workspaceAnimation._switchWorkspaceEnd(tracker, duration, progress, time);
 	}
 
 	override destroy(): void {
@@ -231,8 +232,8 @@ export class GestureExtension implements ISubExtension {
 		swipeTracker._touchpadGesture.connect('end', swipeTracker._endTouchpadGesture.bind(swipeTracker));
 		swipeTracker.bind_property('enabled', swipeTracker._touchpadGesture, 'enabled', 0);
 		swipeTracker.bind_property(
-			'orientation', 
-			swipeTracker._touchpadGesture, 
+			'orientation',
+			swipeTracker._touchpadGesture,
 			'orientation',
 			GObject.BindingFlags.SYNC_CREATE,
 		);

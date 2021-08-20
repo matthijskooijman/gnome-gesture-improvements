@@ -18,84 +18,83 @@ enum TouchpadState {
 	IGNORED = 3,
 }
 
-export const TouchpadSwipeGesture = GObject.registerClass({
-	Properties: {
-		'enabled': GObject.ParamSpec.boolean(
-			'enabled',
-			'enabled',
-			'enabled',
-			GObject.ParamFlags.READWRITE,
-			true,
-		),
-		'orientation': GObject.ParamSpec.enum(
-			'orientation',
-			'orientation',
-			'orientation',
-			GObject.ParamFlags.READWRITE,
-			Clutter.Orientation,
-			Clutter.Orientation.HORIZONTAL,
-		),
-	},
+// define enum
+export enum GestureDirection {
+	LEFT,
+	RIGHT,
+	UP,
+	DOWN,
+}
+
+export interface ITouchpadSwipeKlassConstructorProperties {
+	nfingers: number[],
+	allowedModes: Shell.ActionMode,
+	triggerDirections: GestureDirection[],
+	checkAllowedGesture?: (event: CustomEventType) => boolean,
+	gestureSpeed?: number,
+}
+
+// this is for actual use
+export const TouchpadSwipeTracker = GObject.registerClass({
 	Signals: {
-		'begin': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE] },
+		'begin': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE, GObject.TYPE_INT] },
 		'update': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE, GObject.TYPE_UINT] },
-		'end': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE] },
+		'end': { param_types: [GObject.TYPE_UINT, GObject.TYPE_DOUBLE, GObject.TYPE_UINT] },
 	},
-}, class TouchpadSwipeGesture extends GObject.Object {
+}, class TouchpadSwipeTracker extends GObject.Object {
 	private _nfingers: number[];
 	private _allowedModes: Shell.ActionMode;
-	orientation: Clutter.Orientation;
-	private _state: TouchpadState;
-	private _checkAllowedGesture?: (event: CustomEventType) => boolean;
+	private _triggerDirections: GestureDirection[];
+	private _checkAllowedGesture: ITouchpadSwipeKlassConstructorProperties['checkAllowedGesture'];
+
+	protected _state = TouchpadState.NONE;
+	protected _previousDirection: GestureDirection;
+
+	_stageCaptureEvent = 0;
+	enabled = true;
+	SWIPE_MULTIPLIER: number;
+
 	private _cumulativeX = 0;
 	private _cumulativeY = 0;
-	private _followNaturalScroll: boolean;
-	private _toggledDirection = false;
-	private _autoSwitchDirection = false;
-	private _autodirection: Clutter.Orientation;
-	private _autoSwitchPositive: boolean | undefined;
-	_stageCaptureEvent = 0;
-	SWIPE_MULTIPLIER: number;
-	TOUCHPAD_BASE_HEIGHT = TouchpadConstants.TOUCHPAD_BASE_HEIGHT;
-	TOUCHPAD_BASE_WIDTH = TouchpadConstants.TOUCHPAD_BASE_WIDTH;
-	DRAG_THRESHOLD_DISTANCE = TouchpadConstants.DRAG_THRESHOLD_DISTANCE;
-	enabled = true;
 
-	constructor(
-		nfingers: number[],
-		allowedModes: Shell.ActionMode,
-		orientation: Clutter.Orientation,
-		followNaturalScroll = true,
-		checkAllowedGesture = undefined,
-		gestureSpeed = 1.0,
-	) {
+	constructor(params: ITouchpadSwipeKlassConstructorProperties) {
 		super();
-		this._nfingers = nfingers;
-		this._allowedModes = allowedModes;
-		this.orientation = orientation;
-		this._autodirection = orientation;
-		this._state = TouchpadState.NONE;
-		this._checkAllowedGesture = checkAllowedGesture;
-		this._followNaturalScroll = followNaturalScroll;
+		params.gestureSpeed = params.gestureSpeed ?? 1.0;
+
+		this._nfingers = params.nfingers;
+		this._allowedModes = params.allowedModes;
+		this._triggerDirections = params.triggerDirections;
+		this._previousDirection = this._triggerDirections[0];
+
+		this._checkAllowedGesture = params.checkAllowedGesture;
+
+		this.SWIPE_MULTIPLIER = params.gestureSpeed * TouchpadConstants.SWIPE_MULTIPLIER;
+
 		if (Meta.is_wayland_compositor()) {
 			this._stageCaptureEvent = global.stage.connect('captured-event::touchpad', this._handleEvent.bind(this));
 		} else {
 			DBusUtils.subscribe(this._handleEvent.bind(this));
 		}
-
-		this.SWIPE_MULTIPLIER = TouchpadConstants.SWIPE_MULTIPLIER * (typeof (gestureSpeed) !== 'number' ? 1.0 : gestureSpeed);
 	}
 
-	_handleEvent(_actor: undefined | Clutter.Actor, event: CustomEventType): boolean {
+	destroy() {
+		if (this._stageCaptureEvent) {
+			global.stage.disconnect(this._stageCaptureEvent);
+			this._stageCaptureEvent = 0;
+		}
+	}
+
+	setGestureSpeed(speed: number) {
+		this.SWIPE_MULTIPLIER = speed * TouchpadConstants.SWIPE_MULTIPLIER;
+	}
+
+	_handleEvent(_actor: Clutter.Actor | undefined, event: CustomEventType) {
 		if (event.type() !== Clutter.EventType.TOUCHPAD_SWIPE)
 			return Clutter.EVENT_PROPAGATE;
 
 		const gesturePhase = event.get_gesture_phase();
 		if (gesturePhase === Clutter.TouchpadGesturePhase.BEGIN) {
 			this._state = TouchpadState.NONE;
-			this._toggledDirection = false;
-			this._autoSwitchDirection = false;
-			this._autodirection = this.orientation;
 		}
 
 		if (this._state === TouchpadState.IGNORED)
@@ -127,6 +126,16 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 			}
 		}
 
+		switch (this._state) {
+			case TouchpadState.NONE:
+			case TouchpadState.PENDING:
+				return this._checkTrigger(event);
+			case TouchpadState.HANDLING:
+				return this._processEvent(event);
+		}
+	}
+
+	private _checkTrigger(event: CustomEventType) {
 		const time = event.get_time();
 
 		const [x, y] = event.get_coords();
@@ -139,118 +148,170 @@ export const TouchpadSwipeGesture = GObject.registerClass({
 			this._cumulativeX = 0;
 			this._cumulativeY = 0;
 			this._state = TouchpadState.PENDING;
+			return Clutter.EVENT_PROPAGATE;
 		}
 
-		if (this._state === TouchpadState.PENDING) {
-			this._cumulativeX += dx * this.SWIPE_MULTIPLIER;
-			this._cumulativeY += dy * this.SWIPE_MULTIPLIER;
-
-			const cdx = this._cumulativeX;
-			const cdy = this._cumulativeY;
-			const distance = Math.sqrt(cdx * cdx + cdy * cdy);
-
-			if (distance >= this.DRAG_THRESHOLD_DISTANCE) {
-				const gestureOrientation = Math.abs(cdx) > Math.abs(cdy)
-					? Clutter.Orientation.HORIZONTAL
-					: Clutter.Orientation.VERTICAL;
-
-				this._cumulativeX = 0;
-				this._cumulativeY = 0;
-
-				if (gestureOrientation === this.orientation) {
-					this._state = TouchpadState.HANDLING;
-					this.emit('begin', time, x, y);
-					return Clutter.EVENT_STOP;
-				} else {
-					this._state = TouchpadState.IGNORED;
-					return Clutter.EVENT_PROPAGATE;
-				}
-			} else {
-				return Clutter.EVENT_PROPAGATE;
+		const gestureDirection = this._getCumulativeDirection(dx, dy);
+		if (gestureDirection !== undefined) {
+			if (this._triggerDirections.includes(gestureDirection)) {
+				this._state = TouchpadState.HANDLING;
+				this._previousDirection = gestureDirection;
+				this.emit('begin', time, x, y, gestureDirection);
+				return Clutter.EVENT_STOP;
+			}
+			else {
+				this._state = TouchpadState.IGNORED;
 			}
 		}
 
-		if (this._autoSwitchDirection) {
-			this._cumulativeX += dx * this.SWIPE_MULTIPLIER;
-			this._cumulativeY += dy * this.SWIPE_MULTIPLIER;
+		return Clutter.EVENT_PROPAGATE;
+	}
 
-			const cdx = this._cumulativeX;
-			const cdy = this._cumulativeY;
-			const distance = Math.sqrt(cdx * cdx + cdy * cdy);
 
-			if (distance >= TouchpadConstants.SWITCH_DIRECTION_THRESHOLD_DISTANCE) {
-				this._setAutoDirection(cdx, cdy);
-				this._cumulativeX = 0;
-				this._cumulativeY = 0;
-			}
-		}
+	private _processEvent(event: CustomEventType) {
+		// handling
+		const time = event.get_time();
 
-		const vertical = this._autodirection === Clutter.Orientation.VERTICAL;
-		let delta = ((vertical !== this._toggledDirection) ? dy : dx) * this.SWIPE_MULTIPLIER;
-		const distance = vertical ? this.TOUCHPAD_BASE_HEIGHT : this.TOUCHPAD_BASE_WIDTH;
+		const [dx, dy] = event.get_gesture_motion_delta_unaccelerated();
+		this._previousDirection = this._getCumulativeDirection(dx, dy) ?? this._previousDirection;
 
-		switch (gesturePhase) {
+		const delta = this._getDelta(dx, dy, this._previousDirection, false);
+		const distance = this._getDelta(
+			TouchpadConstants.TOUCHPAD_BASE_WIDTH,
+			TouchpadConstants.TOUCHPAD_BASE_HEIGHT,
+			this._previousDirection,
+			true,
+		);
+
+		switch (event.get_gesture_phase()) {
 			case Clutter.TouchpadGesturePhase.BEGIN:
 			case Clutter.TouchpadGesturePhase.UPDATE:
-				if (this._followNaturalScroll)
-					delta = -delta;
-
-				this.emit('update', time, delta, distance, this._autodirection);
+				this.emit('update', time, delta, distance, this._previousDirection);
 				break;
-
 			case Clutter.TouchpadGesturePhase.END:
 			case Clutter.TouchpadGesturePhase.CANCEL:
-				this.emit('end', time, distance);
+				this.emit('end', time, distance, this._previousDirection);
 				this._state = TouchpadState.NONE;
-				this._toggledDirection = false;
-				this._autoSwitchDirection = false;
-				this._autodirection = this.orientation;
-				return Clutter.EVENT_STOP;
+				break;
 		}
 
-		return this._state === TouchpadState.HANDLING
-			? Clutter.EVENT_STOP
-			: Clutter.EVENT_PROPAGATE;
+		return Clutter.EVENT_STOP;
 	}
 
-	private _setAutoDirection(cdx: number, cdy: number) {
-		// is gesture positive or negative
-		const absCdxoy = Math.max(Math.abs(cdx), Math.abs(cdy));
-		let canSwitchDirection = true;
-		if (this._autoSwitchPositive === true) {
-			canSwitchDirection = absCdxoy === Math.max(cdx, cdy);
-		}
-		else if (this._autoSwitchPositive === false) {
-			canSwitchDirection = absCdxoy === Math.max(-cdx, -cdy);
-		}
-
-		if (canSwitchDirection && this._autoSwitchDirection) {
-			this._autodirection = Math.abs(cdx) > Math.abs(cdy)
-				? Clutter.Orientation.HORIZONTAL
-				: Clutter.Orientation.VERTICAL;
+	protected _getDelta(dx: number, dy: number, direction: GestureDirection, _noOverride: boolean) {
+		switch (direction) {
+			case GestureDirection.LEFT:
+			case GestureDirection.RIGHT:
+				return dx;
+			case GestureDirection.UP:
+			case GestureDirection.DOWN:
+				return dy;
 		}
 	}
 
-	switchDirectionTo(direction: Clutter.Orientation): void {
+	protected _getCumulativeDirection(dx: number, dy: number): GestureDirection | undefined {
+		this._cumulativeX += dx * this.SWIPE_MULTIPLIER;
+		this._cumulativeY += dy * this.SWIPE_MULTIPLIER;
+
+		const cdx = this._cumulativeX;
+		const cdy = this._cumulativeY;
+		const distance = Math.sqrt(cdx * cdx + cdy * cdy);
+
+		if (distance >= TouchpadConstants.DRAG_THRESHOLD_DISTANCE) {
+			this._cumulativeX = 0;
+			this._cumulativeY = 0;
+			return this._getDirection(cdx, cdy);
+		}
+	}
+
+	private _getDirection(cdx: number, cdy: number): GestureDirection {
+		if (Math.abs(cdx) < Math.abs(cdy)) {
+			return cdy >= 0 ? GestureDirection.DOWN : GestureDirection.UP;
+		}
+		return cdx >= 0 ? GestureDirection.RIGHT : GestureDirection.LEFT;
+	}
+});
+
+// this is for compatibility with `TouchpadSwipeGesture` from gnome-shell
+export const TouchpadSwipeGesture = GObject.registerClass({
+	Properties: {
+		'enabled': GObject.ParamSpec.boolean(
+			'enabled',
+			'enabled',
+			'enabled',
+			GObject.ParamFlags.READWRITE,
+			true,
+		),
+		'orientation': GObject.ParamSpec.enum(
+			'orientation',
+			'orientation',
+			'orientation',
+			GObject.ParamFlags.READWRITE,
+			Clutter.Orientation,
+			Clutter.Orientation.HORIZONTAL,
+		),
+	},
+}, class TouchpadSwipeGesture extends TouchpadSwipeTracker {
+	orientation: Clutter.Orientation;
+	private _followNaturalScroll: boolean;
+	private _switchedOrientation: Clutter.Orientation;
+
+	constructor(
+		nfingers: number[],
+		allowedModes: Shell.ActionMode,
+		orientation: Clutter.Orientation,
+		followNaturalScroll = true,
+		checkAllowedGesture = undefined,
+		gestureSpeed = 1.0,
+	) {
+		super({
+			nfingers: nfingers,
+			allowedModes: allowedModes,
+			checkAllowedGesture: checkAllowedGesture,
+			gestureSpeed: gestureSpeed,
+			triggerDirections: TouchpadSwipeGesture._getTriggerDirection(orientation),
+		} as ITouchpadSwipeKlassConstructorProperties);
+
+		this.orientation = orientation;
+		this._switchedOrientation = orientation;
+		this._followNaturalScroll = followNaturalScroll;
+		this.SWIPE_MULTIPLIER = TouchpadConstants.SWIPE_MULTIPLIER * (typeof (gestureSpeed) !== 'number' ? 1.0 : gestureSpeed);
+	}
+
+	switchOrientationTo(orientation: Clutter.Orientation) {
+		this._switchedOrientation = orientation;
+	}
+
+	private static _getTriggerDirection(orientation: Clutter.Orientation) {
+		switch (orientation) {
+			case Clutter.Orientation.HORIZONTAL:
+				return [GestureDirection.LEFT, GestureDirection.RIGHT];
+			case Clutter.Orientation.VERTICAL:
+				return [GestureDirection.UP, GestureDirection.DOWN];
+		}
+	}
+
+	override _getCumulativeDirection(dx: number, dy: number) {
 		if (this._state !== TouchpadState.HANDLING) {
-			return;
+			// this is before 'begin' is emitted.
+			this._switchedOrientation = this.orientation;
+			return super._getCumulativeDirection(dx, dy);
 		}
 
-		this._toggledDirection = direction !== this.orientation;
-	}
-
-	public setAutoSwitchDirection(autoSwitch: boolean, positive: boolean, gestureSpeed?: number) {
-		this._autodirection = this.orientation;
-		this._autoSwitchDirection = autoSwitch;
-		this._autoSwitchPositive = positive;
-		this.SWIPE_MULTIPLIER = gestureSpeed !== undefined ? TouchpadConstants.SWIPE_MULTIPLIER * gestureSpeed : this.SWIPE_MULTIPLIER;
-	}
-
-	destroy() {
-		if (this._stageCaptureEvent) {
-			global.stage.disconnect(this._stageCaptureEvent);
-			this._stageCaptureEvent = 0;
+		switch (this._switchedOrientation) {
+			case Clutter.Orientation.HORIZONTAL:
+				return GestureDirection.RIGHT;
+			case Clutter.Orientation.VERTICAL:
+				return GestureDirection.DOWN;
 		}
+	}
+
+	override _getDelta(dx: number, dy: number, direction: GestureDirection, noOverride: boolean) {
+		let delta = super._getDelta(dx, dy, direction, noOverride);
+		if (!noOverride && this._followNaturalScroll) {
+			delta = -delta;
+		}
+		return delta;
 	}
 });
 

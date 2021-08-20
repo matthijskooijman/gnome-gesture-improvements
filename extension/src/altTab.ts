@@ -2,16 +2,16 @@ import Clutter from '@gi-types/clutter';
 import GLib from '@gi-types/glib';
 import GObject from '@gi-types/gobject';
 import Shell from '@gi-types/shell';
-import Meta from '@gi-types/meta';
-import { imports, global } from 'gnome-shell';
+import { imports } from 'gnome-shell';
 
 const Main = imports.ui.main;
 const { WindowSwitcherPopup, AppSwitcherPopup } = imports.ui.altTab;
 
-import { TouchpadSwipeGesture } from './swipeTracker';
-import { AltTabConstants, ExtSettings } from '../constants';
+import { TouchpadSwipeTracker, ITouchpadSwipeKlassConstructorProperties, GestureDirection } from './swipeTracker';
+import { AltTabConstants, ExtSettings, TouchpadConstants } from '../constants';
 
 let dummyWinCount = AltTabConstants.DUMMY_WIN_COUNT;
+const AltTabAppSwitcherThumbnails_CThreshold = TouchpadConstants.SWITCH_DIRECTION_THRESHOLD_DISTANCE / TouchpadConstants.TOUCHPAD_BASE_WIDTH;
 
 function setDummyWinCount(nelement: number): void {
 	const leftOver = AltTabConstants.MIN_WIN_COUNT - nelement;
@@ -50,27 +50,27 @@ enum SwitcherType {
 interface IAltTabSwitcher {
 	selectItemForProgress(progress: number): void;
 	getCurrentProgress(): number;
-	open(callback: () => void): boolean;
-	selectItem(open: boolean): void;
+	open(direction?: GestureDirection): boolean;
+	showImmediately(): void;
+	selectItem?(open: boolean): void;
 	activate(): void;
 	destroy(): void;
-	get kind(): SwitcherType;
-	get hasItemSelected(): boolean;
-	get nelements(): number;
+	kind: SwitcherType;
+	hasItemSelected?: boolean;
+	nelements: number;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const AltTabAppSwitcher = GObject.registerClass(
 	class AltTabAppSwitcher extends AppSwitcherPopup implements IAltTabSwitcher {
 		private _hasOpenedWindows: boolean;
-		private _forceOpen?: { appIndex: number; windowIndex: number; };
 
 		constructor() {
 			super();
 			this._hasOpenedWindows = false;
 		}
 
-		open(callback: () => void) {
+		open(direction?: GestureDirection) {
 			const canShow = super.show(false, 'switch-applications', 0);
 			if (!canShow)
 				return false;
@@ -80,32 +80,17 @@ const AltTabAppSwitcher = GObject.registerClass(
 				this._initialDelayTimeoutId = 0;
 			}
 
-			// get most recently used window, if gesture ended before switcher was shown, switch to mru window
-			if (this._items.length > 1 && this._items[0].cachedWindows.length > 1) {
-				const allWindows = global.display.get_tab_list(Meta.TabList.NORMAL, null);
-				const curWinInd = allWindows.indexOf(this._items[0].cachedWindows[1]);
-				const nextWinInd = allWindows.indexOf(this._items[1].cachedWindows[0]);
-				if (curWinInd < nextWinInd) {
-					this._forceOpen = {
-						appIndex: 0,
-						windowIndex: 1,
-					};
-				}
+			if (direction === GestureDirection.LEFT) {
+				this._select(0);
 			}
-
-			this._initialDelayTimeoutId = GLib.timeout_add(
-				GLib.PRIORITY_DEFAULT,
-				AltTabConstants.DELAY_DURATION,
-				() => {
-					this._forceOpen = undefined;
-					callback();
-					this._showImmediately();
-					return GLib.SOURCE_REMOVE;
-				},
-			);
 
 			setDummyWinCount(this.nelements);
 			return true;
+		}
+
+		showImmediately() {
+			Main.osdWindowManager.hideAll();
+			this.opacity = 255;
 		}
 
 		selectItemForProgress(progress: number) {
@@ -123,11 +108,7 @@ const AltTabAppSwitcher = GObject.registerClass(
 		}
 
 		activate() {
-			if (this._forceOpen) {
-				this._selectedIndex = this._forceOpen.appIndex;
-				this._currentWindow = this._forceOpen.windowIndex;
-			}
-			else if (!this._hasOpenedWindows && this._currentWindow < 0) {
+			if (!this._hasOpenedWindows && this._currentWindow < 0) {
 				this._currentWindow = 0;
 			}
 
@@ -224,7 +205,7 @@ const AltTabWindowSwitcher = GObject.registerClass(
 			Main.activateWindow(win);
 		}
 
-		open(callback: () => void) {
+		open(direction?: GestureDirection) {
 			const canShow = super.show(false, 'switch-windows', 0);
 			if (!canShow)
 				return false;
@@ -234,23 +215,18 @@ const AltTabWindowSwitcher = GObject.registerClass(
 				this._initialDelayTimeoutId = 0;
 			}
 
-			this._initialDelayTimeoutId = GLib.timeout_add(
-				GLib.PRIORITY_DEFAULT,
-				AltTabConstants.DELAY_DURATION,
-				() => {
-					callback();
-					this._showImmediately();
-					return GLib.SOURCE_REMOVE;
-				},
-			);
+			if (direction === GestureDirection.LEFT) {
+				this._select(0);
+			}
 
 			setDummyWinCount(this.nelements);
-
 			return true;
 		}
 
-		// eslint-disable-next-line @typescript-eslint/no-empty-function
-		selectItem(_open: never) { }
+		showImmediately() {
+			Main.osdWindowManager.hideAll();
+			this.opacity = 255;
+		}
 
 		_keyPressHandler() {
 			return Clutter.EVENT_STOP;
@@ -268,10 +244,6 @@ const AltTabWindowSwitcher = GObject.registerClass(
 			return SwitcherType.WINDOW;
 		}
 
-		get hasItemSelected() {
-			return false;
-		}
-
 		get nelements(): number {
 			return this._items.length;
 		}
@@ -287,43 +259,58 @@ enum AltTabExtState {
 }
 
 export class AltTabGestureExtension implements ISubExtension {
-	private _connectHandlers: number[];
-	private _touchpadSwipeTracker: typeof TouchpadSwipeGesture.prototype;
+	private _touchpadSwipeTrackers: {
+		tracker: typeof TouchpadSwipeTracker.prototype,
+		direction: GestureDirection,
+		ids: number[]
+	}[] = [];
+
 	private _switcher?: IAltTabSwitcher;
 	private _extState = AltTabExtState.DISABLED;
 	private _progress = 0;
 	private _altTabTimeoutId = 0;
+	private _cumulativeDirection = GestureDirection.RIGHT;
+	private _cumulativeProgress = 0;
 
 	constructor() {
-		this._connectHandlers = [];
+		this._bindTouchpadTracker(SwitcherType.WINDOW, GestureDirection.RIGHT);
+		this._bindTouchpadTracker(SwitcherType.APP, GestureDirection.LEFT);
+		this._extState = AltTabExtState.DEFAULT;
+	}
 
-		this._touchpadSwipeTracker = new TouchpadSwipeGesture(
-			(ExtSettings.DEFAULT_SESSION_WORKSPACE_GESTURE ? [4] : [3]),
-			Shell.ActionMode.ALL,
-			Clutter.Orientation.HORIZONTAL,
-			false,
-			this._checkAllowedGesture.bind(this),
-		);
-		this._touchpadSwipeTracker.setAutoSwitchDirection(true, true, 1);
+	_bindTouchpadTracker(kind: SwitcherType, triggerDirection: GestureDirection): void {
+		const touchpadSwipeTracker = new TouchpadSwipeTracker({
+			nfingers: (ExtSettings.DEFAULT_SESSION_WORKSPACE_GESTURE ? [4] : [3]),
+			allowedModes: Shell.ActionMode.ALL,
+			triggerDirections: [triggerDirection],
+			checkAllowedGesture: this._checkAllowedGesture.bind(this),
+			gestureSpeed: 1,
+		} as ITouchpadSwipeKlassConstructorProperties);
+
+		const beginFunc = kind === SwitcherType.APP ? this._gestureBeginApp : this._gestureBeginWindow;
+		this._touchpadSwipeTrackers.push({
+			tracker: touchpadSwipeTracker,
+			direction: triggerDirection,
+			ids: [
+				touchpadSwipeTracker.connect('begin', beginFunc.bind(this)),
+				touchpadSwipeTracker.connect('update', this._gestureUpdate.bind(this)),
+				touchpadSwipeTracker.connect('end', this._gestureEnd.bind(this)),
+			],
+		});
 	}
 
 	_checkAllowedGesture(): boolean {
 		return this._extState <= AltTabExtState.DEFAULT && Main.actionMode === Shell.ActionMode.NORMAL;
 	}
 
-	apply(): void {
-		this._connectHandlers.push(this._touchpadSwipeTracker.connect('begin', this._gestureBegin.bind(this)));
-		this._connectHandlers.push(this._touchpadSwipeTracker.connect('update', this._gestureUpdate.bind(this)));
-		this._connectHandlers.push(this._touchpadSwipeTracker.connect('end', this._gestureEnd.bind(this)));
-		this._extState = AltTabExtState.DEFAULT;
-	}
-
 	destroy(): void {
 		this._extState = AltTabExtState.DISABLED;
-		this._connectHandlers.forEach(handle => this._touchpadSwipeTracker.disconnect(handle));
+		this._touchpadSwipeTrackers.forEach(swipeTracker => {
+			swipeTracker.ids.forEach(id => swipeTracker.tracker.disconnect(id));
+			swipeTracker.tracker.destroy();
+		});
 
-		this._touchpadSwipeTracker.destroy();
-		this._connectHandlers = [];
+		this._touchpadSwipeTrackers = [];
 
 		if (this._switcher) {
 			this._switcher.destroy();
@@ -331,17 +318,40 @@ export class AltTabGestureExtension implements ISubExtension {
 		}
 	}
 
-	_gestureBegin(): void {
-		this._progress = 0;
+	_gestureBeginApp(swipeTracker: typeof TouchpadSwipeTracker.prototype): void {
 		if (this._extState === AltTabExtState.DEFAULT) {
 			this._switcher = new AltTabAppSwitcher();
-			this._touchpadSwipeTracker.setAutoSwitchDirection(true, true, getGestureSpeed(this._switcher.nelements));
+			this._gestureBegin(swipeTracker);
+		}
+	}
 
-			if (this._switcher.open(() => {
-				this._extState = AltTabExtState.ALTTAB;
-				if (this._switcher)
-					this._progress = this._switcher.getCurrentProgress();
-			})) {
+	_gestureBeginWindow(swipeTracker: typeof TouchpadSwipeTracker.prototype): void {
+		this._progress = 0;
+		if (this._extState === AltTabExtState.DEFAULT) {
+			this._switcher = new AltTabWindowSwitcher();
+			this._gestureBegin(swipeTracker);
+		}
+	}
+
+	_gestureBegin(swipeTracker: typeof TouchpadSwipeTracker.prototype): void {
+		if (this._extState === AltTabExtState.DEFAULT && this._switcher) {
+			swipeTracker.setGestureSpeed(getGestureSpeed(this._switcher.nelements));
+			const direction = this._touchpadSwipeTrackers.find(st => st.tracker === swipeTracker)?.direction;
+			if (this._switcher.open(direction)) {
+				this._altTabTimeoutId = GLib.timeout_add(
+					GLib.PRIORITY_DEFAULT,
+					AltTabConstants.DELAY_DURATION,
+					() => {
+						if (this._switcher) {
+							this._progress = this._switcher.getCurrentProgress();
+							this._switcher.showImmediately();
+						}
+
+						this._extState = AltTabExtState.ALTTAB;
+						this._altTabTimeoutId = 0;
+						return GLib.SOURCE_REMOVE;
+					},
+				);
 				this._progress = this._switcher.getCurrentProgress();
 				this._extState = AltTabExtState.ALTTABDELAY;
 			}
@@ -352,17 +362,31 @@ export class AltTabGestureExtension implements ISubExtension {
 		}
 	}
 
-	_gestureUpdate(_gesture: never, _time: never, delta: number, distance: number, direction: Clutter.Orientation): void {
+	_gestureUpdate(swipeTracker: typeof TouchpadSwipeTracker.prototype, _time: never, delta: number, distance: number, direction: GestureDirection): void {
+		if (this._cumulativeDirection !== direction) {
+			this._cumulativeProgress = 0;
+			this._cumulativeDirection = direction;
+		}
+		this._cumulativeProgress = Math.clamp(this._cumulativeProgress + Math.abs(delta) / distance, 0, 1);
+
 		if (this._extState === AltTabExtState.ALTTAB && this._switcher) {
-			if (direction === Clutter.Orientation.HORIZONTAL) {
-				this._progress = Math.clamp(this._progress + delta / distance, 0, 1);
-				this._switcher.selectItemForProgress(this._progress);
-			}
-			else {
-				const hasItemSelected = this._switcher.hasItemSelected;
-				this._switcher.selectItem(!hasItemSelected);
-				this._touchpadSwipeTracker.setAutoSwitchDirection(true, hasItemSelected, getGestureSpeed(this._switcher.nelements));
-				this._progress = this._switcher.getCurrentProgress();
+			let expctedHasItemSelected: boolean;
+			switch (direction) {
+				case GestureDirection.LEFT:
+				case GestureDirection.RIGHT:
+					this._progress = Math.clamp(this._progress + delta / distance, 0, 1);
+					this._switcher.selectItemForProgress(this._progress);
+					break;
+				case GestureDirection.DOWN:
+				case GestureDirection.UP:
+					expctedHasItemSelected = direction === GestureDirection.UP;
+					if (this._switcher.hasItemSelected === expctedHasItemSelected && this._cumulativeProgress >= AltTabAppSwitcherThumbnails_CThreshold && this._switcher.selectItem) {
+						this._switcher.selectItem(!expctedHasItemSelected);
+						this._progress = this._switcher.getCurrentProgress();
+						swipeTracker.setGestureSpeed(getGestureSpeed(this._switcher.nelements));
+						this._cumulativeProgress = 0;
+					}
+					break;
 			}
 		}
 	}

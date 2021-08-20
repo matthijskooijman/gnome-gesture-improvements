@@ -191,7 +191,7 @@ declare namespace imports {
 				}, monitor: never);
 
 				_switchWorkspaceUpdate(tracker: swipeTracker.SwipeTracker, progress: number);
-				_switchWorkspaceEnd(tracker: swipeTracker.SwipeTracker, duration: number, progress: number);
+				_switchWorkspaceEnd(tracker: swipeTracker.SwipeTracker, duration: number, progress: number, time: number);
 			}
 		}
 	}
