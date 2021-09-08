@@ -3,10 +3,10 @@ This is generated file
 Do not edit directly
 Edit schema file instead and then run "npm run initialize"
 */
+import { imports } from 'gnome-shell';
 import Gio from '@gi-types/gio';
 import GLib from '@gi-types/glib';
 import GObject from '@gi-types/gobject';
-import { imports } from 'gnome-shell';
 export declare type BooleanSettings =
 	| 'default-session-workspace'
 	| 'default-overview';

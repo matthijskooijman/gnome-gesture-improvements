@@ -454,10 +454,21 @@ function CustomCreateImportDeclaration(moduleName: string, names: string | strin
 
 function makeTsFile(enumObjs: IEnum | IEnum[], keys: IKey | IKey[]): ts.SourceFile {
 	const statements: ts.Statement[] = [];
-	// import 'Gio', 'GLib', 'GObject'
+	
 	// import 'imports' from gnome-shell
-	statements.push(...['Gio', 'GLib', 'GObject'].map(lib => CustomCreateImportDeclaration(`@gi-types/${lib.toLowerCase()}`, lib)));
+	// import 'Gio', 'GLib', 'GObject'
 	statements.push(CustomCreateImportDeclaration('gnome-shell', ['imports']));
+	statements.push(...['Gio', 'GLib', 'GObject'].map(lib => CustomCreateImportDeclaration(`@gi-types/${lib.toLowerCase()}`, lib)));
+
+	// add top level comment
+	ts.addSyntheticLeadingComment(
+		statements[0],
+		SyntaxKind.MultiLineCommentTrivia,
+		'\nThis is generated file\n' +
+		'Do not edit directly\n' +
+		'Edit schema file instead and then run "npm run initialize"\n',
+		true,
+	);
 
 	// enum statements
 	statements.push(...generateEnumStatements(enumObjs));
@@ -467,18 +478,6 @@ function makeTsFile(enumObjs: IEnum | IEnum[], keys: IKey | IKey[]): ts.SourceFi
 
 	// add getSettings function
 	statements.push(generateGetSettingsFunction());
-
-	// add top level comment
-	if (statements.length) {
-		ts.addSyntheticLeadingComment(
-			statements[0],
-			SyntaxKind.MultiLineCommentTrivia,
-			'\nThis is generated file\n' +
-			'Do not edit directly\n' +
-			'Edit schema file instead and then run "npm run initialize"\n',
-			true,
-		);
-	}
 
 	return createSourceFile(
 		statements,
