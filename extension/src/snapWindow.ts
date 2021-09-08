@@ -11,7 +11,7 @@ const Utils = imports.misc.util;
 
 import { createSwipeTracker, TouchpadSwipeGesture } from './swipeTracker';
 import { ExtSettings } from '../constants';
-import { easeClutterActor, easeStAdjustment } from './utils/environment';
+import { easeClutterActor, easeAdjustment } from './utils/environment';
 
 const { SwipeTracker } = imports.ui.swipeTracker;
 
@@ -52,7 +52,14 @@ const TilePreview = GObject.registerClass(
 				style_class: 'tile-preview',
 				style: 'border-radius: 8px',
 				visible: false,
+				effect: new Shell.BlurEffect({
+					enabled: true,
+					brightness: 1,
+					sigma: 30,
+					mode: Shell.BlurMode.BACKGROUND,
+				}),
 			});
+
 			this.connect('destroy', this._onDestroy.bind(this));
 
 			this._adjustment = new St.Adjustment({
@@ -143,7 +150,7 @@ const TilePreview = GObject.registerClass(
 				this._direction = Clutter.Orientation.VERTICAL;
 			};
 
-			easeStAdjustment(this._adjustment, state, {
+			easeAdjustment(this._adjustment, state, {
 				duration: duration,
 				mode: Clutter.AnimationMode.EASE_OUT_QUAD,
 				onStopped: callback,

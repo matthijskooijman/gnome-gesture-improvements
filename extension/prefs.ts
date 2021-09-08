@@ -2,6 +2,9 @@ import Gtk from '@gi-types/gtk';
 // import Gdk from '@gi-types/gdk';
 import Gio from '@gi-types/gio';
 import { getSettings, IExtensionSettings } from './generated/settings';
+import { imports } from 'gnome-shell';
+
+const ExtMe = imports.misc.extensionUtils.getCurrentExtension();
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 export function init(): void { }
@@ -9,7 +12,7 @@ export function init(): void { }
 export function buildPrefsWidget(): Gtk.Widget {
 	const builder = new Gtk.Builder();
 
-	const UIFilePath = Me.dir.get_child('ui').get_path() + '/prefs.ui';
+	const UIFilePath = ExtMe.dir.get_child('ui').get_path() + '/prefs.ui';
 	builder.add_from_file(UIFilePath);
 
 	const settings: IExtensionSettings = getSettings();

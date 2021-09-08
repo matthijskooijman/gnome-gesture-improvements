@@ -12,16 +12,10 @@ declare interface EaseParamsType {
 	[key: string]: any
 }
 
-Object.assign(Actor, {
-	ease: () => {
-		log('ease');
-	},
-});
-
 export function easeClutterActor(actor: Actor, params: EaseParamsType): void {
 	(actor as any).ease(params);
 }
 
-export function easeStAdjustment(actor: Adjustment, value: number, params: EaseParamsType): void {
+export function easeAdjustment(actor: Adjustment, value: number, params: EaseParamsType): void {
 	(actor as any).ease(value, params);
 }

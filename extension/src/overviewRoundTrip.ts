@@ -7,11 +7,12 @@ const { SwipeTracker } = imports.ui.swipeTracker;
 import { createSwipeTracker } from './swipeTracker';
 import { OverviewControlsState, ExtSettings } from '../constants';
 
-const ExtensionState = {
-	DISABLED: 0,
-	DEFAULT: 1,
-	CUSTOM: 2,
-};
+// declare enum
+enum ExtensionState {
+	DISABLED = 0,
+	DEFAULT = 1,
+	CUSTOM = 2,
+}
 
 export class OverviewRoundTripGestureExtension implements ISubExtension {
 	private _overviewControls: imports.ui.overviewControls.OverviewControlsManager;
@@ -114,6 +115,12 @@ export class OverviewRoundTripGestureExtension implements ISubExtension {
 	}
 
 	_gestureUpdate(tracker: typeof SwipeTracker.prototype, progress: number): void {
+		// console.log(JSON.stringify({
+		// 	gestureState: 'update',
+		// 	progress: progress,
+		// 	state: ExtensionState[this._extensionState],
+		// 	'this._progress': this._progress,
+		// }));
 		if (progress < OverviewControlsState.HIDDEN ||
 			progress > OverviewControlsState.APP_GRID) {
 			this._extensionState = ExtensionState.CUSTOM;
@@ -128,6 +135,13 @@ export class OverviewRoundTripGestureExtension implements ISubExtension {
 	}
 
 	_gestureEnd(tracker: typeof SwipeTracker.prototype, duration: number, endProgress: number): void {
+		// console.log(JSON.stringify({
+		// 	gestureState: 'end',
+		// 	progress: endProgress,
+		// 	state: ExtensionState[this._extensionState],
+		// 	'this._progress': this._progress,
+		// }));
+		
 		if (this._progress < OverviewControlsState.HIDDEN) {
 			this._extensionState = ExtensionState.CUSTOM;
 			endProgress = endProgress >= OverviewControlsState.HIDDEN ?
